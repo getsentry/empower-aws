@@ -1,0 +1,10 @@
+{
+  "name": "bedrock-sentry-spike",
+  "private": true,
+  "type": "module",
+  "description": "Checks that @sentry/node traces Bedrock calls automatically, for the November 10 gate.",
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3",
+    "@sentry/node": "11.11.0"
+  }
+}
