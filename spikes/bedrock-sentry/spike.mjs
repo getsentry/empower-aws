@@ -12,7 +12,12 @@ import {
 } from '@aws-sdk/client-bedrock-runtime';
 
 const modelId = process.env.MODEL_ID || 'us.anthropic.claude-sonnet-5-5';
-const client = new BedrockRuntimeClient({ region: process.env.AWS_REGION || 'us-east-1' });
+// Bedrock occasionally returns ServiceUnavailableException under load; retry with backoff.
+const client = new BedrockRuntimeClient({
+  region: process.env.AWS_REGION || 'us-east-1',
+  maxAttempts: 6,
+  retryMode: 'adaptive',
+});
 
 const PRODUCTS = [
   { id: 3, title: 'Plant Mood Monitor', price: 130 },
