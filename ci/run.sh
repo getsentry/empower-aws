@@ -56,6 +56,12 @@ task_spike() {
   node --import ./instrument.mjs spike.mjs
 }
 
+task_probe() {
+  (cd spikes/bedrock-sentry && npm install --no-audit --no-fund --loglevel=error)
+  use_bedrock_role
+  node spikes/bedrock-sentry/probe.mjs
+}
+
 task_on-push() {
   # Tasks to run on every push to main, one per line. Lines starting with # are skipped.
   while read -r t; do
