@@ -1,0 +1,41 @@
+# Copy of .github/workflows/ci.yml. Claude can't push workflow files, so a person adds
+# this once through GitHub's web UI. Everything it runs lives in ci/run.sh, which can
+# change without touching the workflow.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      task:
+        description: Task for ci/run.sh (for example spike, deploy)
+        default: on-push
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Assume the deploy role
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::431451851189:role/github-empower-aws-deploy
+          aws-region: us-east-1
+
+      - name: Run task
+        run: bash ci/run.sh "${{ inputs.task || 'on-push' }}"
