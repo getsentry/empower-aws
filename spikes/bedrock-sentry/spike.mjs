@@ -100,6 +100,10 @@ async function runTool({ toolUseId, name, input }) {
 const prompt = 'Find me a plant under $200 and buy the cheapest one.';
 const summary = { modelId, modelCalls: 0, toolCalls: [], streamedText: '' };
 
+// Tags every gen_ai span in this run, including the automatic Bedrock ones,
+// so Explore -> Agents can group them into one conversation.
+Sentry.setConversationId(randomUUID());
+
 let failed = false;
 try {
   await Sentry.startSpan(
@@ -110,8 +114,7 @@ try {
         'gen_ai.operation.name': 'invoke_agent',
         'gen_ai.agent.name': 'empower-shop',
         'gen_ai.request.model': modelId,
-        'gen_ai.conversation.id': randomUUID(),
-        'gen_ai.input.messages': JSON.stringify([
+          'gen_ai.input.messages': JSON.stringify([
           { role: 'user', parts: [{ type: 'text', content: prompt }] },
         ]),
       },
