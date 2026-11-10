@@ -100,65 +100,74 @@ async function runTool({ toolUseId, name, input }) {
 const prompt = 'Find me a plant under $200 and buy the cheapest one.';
 const summary = { modelId, modelCalls: 0, toolCalls: [], streamedText: '' };
 
-await Sentry.startSpan(
-  {
-    name: 'invoke_agent empower-shop',
-    op: 'gen_ai.invoke_agent',
-    attributes: {
-      'gen_ai.operation.name': 'invoke_agent',
-      'gen_ai.agent.name': 'empower-shop',
-      'gen_ai.request.model': modelId,
-      'gen_ai.conversation.id': randomUUID(),
-      'gen_ai.input.messages': JSON.stringify([
-        { role: 'user', parts: [{ type: 'text', content: prompt }] },
-      ]),
+let failed = false;
+try {
+  await Sentry.startSpan(
+    {
+      name: 'invoke_agent empower-shop',
+      op: 'gen_ai.invoke_agent',
+      attributes: {
+        'gen_ai.operation.name': 'invoke_agent',
+        'gen_ai.agent.name': 'empower-shop',
+        'gen_ai.request.model': modelId,
+        'gen_ai.conversation.id': randomUUID(),
+        'gen_ai.input.messages': JSON.stringify([
+          { role: 'user', parts: [{ type: 'text', content: prompt }] },
+        ]),
+      },
     },
-  },
-  async (agentSpan) => {
-    summary.traceId = agentSpan.spanContext().traceId;
-    const messages = [{ role: 'user', content: [{ text: prompt }] }];
+    async (agentSpan) => {
+      summary.traceId = agentSpan.spanContext().traceId;
+      const messages = [{ role: 'user', content: [{ text: prompt }] }];
 
-    // Tool loop with Converse.
-    for (let turn = 0; turn < 6; turn++) {
-      const res = await client.send(
-        new ConverseCommand({ modelId, system, messages, toolConfig, inferenceConfig: { maxTokens: 512 } }),
+      // Tool loop with Converse.
+      for (let turn = 0; turn < 6; turn++) {
+        const res = await client.send(
+          new ConverseCommand({ modelId, system, messages, toolConfig, inferenceConfig: { maxTokens: 512 } }),
+        );
+        summary.modelCalls++;
+        messages.push(res.output.message);
+        if (res.stopReason !== 'tool_use') break;
+
+        const results = [];
+        for (const block of res.output.message.content) {
+          if (!block.toolUse) continue;
+          summary.toolCalls.push(block.toolUse.name);
+          results.push(await runTool(block.toolUse));
+        }
+        messages.push({ role: 'user', content: results });
+      }
+
+      // One streamed reply, to check ConverseStream spans close with tokens.
+      const lastRole = messages[messages.length - 1].role;
+      const followUp = 'In one sentence, tell me what happened with my order.';
+      if (lastRole === 'user') messages[messages.length - 1].content.push({ text: followUp });
+      else messages.push({ role: 'user', content: [{ text: followUp }] });
+
+      const stream = await client.send(
+        new ConverseStreamCommand({ modelId, system, messages, toolConfig, inferenceConfig: { maxTokens: 256 } }),
       );
       summary.modelCalls++;
-      messages.push(res.output.message);
-      if (res.stopReason !== 'tool_use') break;
-
-      const results = [];
-      for (const block of res.output.message.content) {
-        if (!block.toolUse) continue;
-        summary.toolCalls.push(block.toolUse.name);
-        results.push(await runTool(block.toolUse));
+      for await (const event of stream.stream) {
+        summary.streamedText += event.contentBlockDelta?.delta?.text ?? '';
       }
-      messages.push({ role: 'user', content: results });
-    }
 
-    // One streamed reply, to check ConverseStream spans close with tokens.
-    const lastRole = messages[messages.length - 1].role;
-    const followUp = 'In one sentence, tell me what happened with my order.';
-    if (lastRole === 'user') messages[messages.length - 1].content.push({ text: followUp });
-    else messages.push({ role: 'user', content: [{ text: followUp }] });
-
-    const stream = await client.send(
-      new ConverseStreamCommand({ modelId, system, messages, toolConfig, inferenceConfig: { maxTokens: 256 } }),
-    );
-    summary.modelCalls++;
-    for await (const event of stream.stream) {
-      summary.streamedText += event.contentBlockDelta?.delta?.text ?? '';
-    }
-
-    agentSpan.setAttribute(
-      'gen_ai.output.messages',
-      JSON.stringify([{ role: 'assistant', parts: [{ type: 'text', content: summary.streamedText }] }]),
-    );
-  },
-);
+      agentSpan.setAttribute(
+        'gen_ai.output.messages',
+        JSON.stringify([{ role: 'assistant', parts: [{ type: 'text', content: summary.streamedText }] }]),
+      );
+    },
+  );
+} catch (error) {
+  // Report the failure before exiting, so a broken run still shows up in Sentry.
+  failed = true;
+  console.error(error);
+  Sentry.captureException(error);
+}
 
 await Sentry.flush(10000);
 console.log(JSON.stringify(summary, null, 2));
+if (failed) process.exit(1);
 if (!summary.toolCalls.includes('search_products')) {
   console.error('The model never called search_products; the run did not exercise the tool loop.');
   process.exit(1);
