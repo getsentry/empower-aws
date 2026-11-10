@@ -48,7 +48,8 @@ use_bedrock_role() {
 task_spike() {
   # Public client key for sentry-developer-experience/agent-aws.
   export SENTRY_DSN="https://473b6873169a9cca336b0c725a0a53a5@o4509446862274560.ingest.us.sentry.io/4512387700883456"
-  export MODEL_ID="${MODEL_ID:-us.anthropic.claude-sonnet-5-5}"
+  # global.* routes to any region with capacity; us.* kept failing with ServiceUnavailableException.
+  export MODEL_ID="${MODEL_ID:-global.anthropic.claude-sonnet-5-5}"
   (cd spikes/bedrock-sentry && npm install --no-audit --no-fund --loglevel=error)
   use_bedrock_role
   cd spikes/bedrock-sentry
