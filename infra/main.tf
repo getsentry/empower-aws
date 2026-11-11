@@ -616,7 +616,38 @@ resource "aws_cloudfront_distribution" "main" {
     geo_restriction { restriction_type = "none" }
   }
 
-  viewer_certificate { cloudfront_default_certificate = true }
+  # The custom domain is attached once its certificate is issued, which needs the
+  # validation record in sentry.dev's DNS (Vercel). Until then the default address serves.
+  aliases = local.domain_ready ? [var.custom_domain] : []
+  viewer_certificate {
+    cloudfront_default_certificate = local.domain_ready ? null : true
+    acm_certificate_arn            = local.domain_ready ? aws_acm_certificate.custom.arn : null
+    ssl_support_method             = local.domain_ready ? "sni-only" : null
+    minimum_protocol_version       = local.domain_ready ? "TLSv1.2_2021" : null
+  }
+}
+
+# ---------------------------------------------------------------------------- custom domain
+variable "custom_domain" {
+  type    = string
+  default = "reinvent.sentry.dev"
+}
+
+resource "aws_acm_certificate" "custom" {
+  domain_name       = var.custom_domain
+  validation_method = "DNS"
+  lifecycle { create_before_destroy = true }
+}
+
+locals { domain_ready = aws_acm_certificate.custom.status == "ISSUED" }
+
+output "custom_domain_status" { value = aws_acm_certificate.custom.status }
+output "custom_domain_dns" {
+  description = "DNS records to add in sentry.dev's zone."
+  value = concat(
+    [for o in aws_acm_certificate.custom.domain_validation_options : "${o.resource_record_name} ${o.resource_record_type} ${o.resource_record_value}"],
+    ["${var.custom_domain}. CNAME ${aws_cloudfront_distribution.main.domain_name}"],
+  )
 }
 
 # ---------------------------------------------------------------------------- outputs

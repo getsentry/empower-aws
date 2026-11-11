@@ -154,6 +154,8 @@ publish_storefront() {
 smoke_test() {
   local url; url="$(tf output -raw url)"
   echo "Storefront: ${url}"
+  echo "Custom domain certificate: $(tf output -raw custom_domain_status)"
+  tf output -json custom_domain_dns | python3 -c 'import json,sys; [print("  dns", r) for r in json.load(sys.stdin)]'
   echo "url=${url}" >> "${CI_SUMMARY:-/tmp/ci-summary}"
   for attempt in $(seq 1 30); do
     if curl -fsS -o /dev/null "${url}/agent/health" && curl -fsS -o /dev/null "${url}/store/success"; then break; fi
