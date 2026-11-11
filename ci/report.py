@@ -12,7 +12,6 @@ PROJECT_ID = "4512404756299776"
 task, code, log_file = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 with open(log_file, errors="replace") as f:
     log = f.read()
-tail = log[-12000:]
 event_id = uuid.uuid4().hex
 run_url = "{}/{}/actions/runs/{}".format(
     os.environ.get("GITHUB_SERVER_URL", "https://github.com"),
@@ -29,13 +28,26 @@ event = {
     "fingerprint": ["ci", task, "ok" if code == 0 else "failed"],
     "release": os.environ.get("GITHUB_SHA"),
     "tags": {"task": task, "exit_code": str(code), "run_id": os.environ.get("GITHUB_RUN_ID", "")},
-    "extra": {"run_url": run_url, "log_tail": tail},
+    "extra": {"run_url": run_url},
 }
-body = "\n".join([
-    json.dumps({"event_id": event_id, "dsn": f"https://{DSN_KEY}@{HOST}/{PROJECT_ID}"}),
-    json.dumps({"type": "event"}),
-    json.dumps(event),
-]).encode()
+# Key facts a task wants surfaced as tags, written as key=value lines (e.g. url=...).
+summary_file = os.environ.get("CI_SUMMARY", "/tmp/ci-summary")
+if os.path.exists(summary_file):
+    for line in open(summary_file):
+        key, _, value = line.strip().partition("=")
+        if key and value:
+            event["tags"][key] = value[:200]
+# The log goes as an attachment: Sentry's data scrubbing replaced it with [Filtered]
+# when it was sent as event data.
+attachment = log.encode("utf-8", "replace")[-500_000:]
+body = b"\n".join([
+    json.dumps({"event_id": event_id, "dsn": f"https://{DSN_KEY}@{HOST}/{PROJECT_ID}"}).encode(),
+    json.dumps({"type": "event"}).encode(),
+    json.dumps(event).encode(),
+    json.dumps({"type": "attachment", "length": len(attachment), "filename": f"ci-{task}.log",
+                "content_type": "text/plain"}).encode(),
+    attachment,
+])
 req = urllib.request.Request(
     f"https://{HOST}/api/{PROJECT_ID}/envelope/",
     data=body,

@@ -141,6 +141,7 @@ publish_storefront() {
 smoke_test() {
   local url; url="$(tf output -raw url)"
   echo "Storefront: ${url}"
+  echo "url=${url}" >> "${CI_SUMMARY:-/tmp/ci-summary}"
   for attempt in $(seq 1 30); do
     if curl -fsS -o /dev/null "${url}/agent/health" && curl -fsS -o /dev/null "${url}/store/success"; then break; fi
     echo "Waiting for ${url} (attempt ${attempt})..."; sleep 20
