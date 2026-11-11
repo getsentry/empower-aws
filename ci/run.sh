@@ -101,6 +101,19 @@ build_and_push() {
   done
 }
 
+# A bad collector config would stop the whole ECS task (every container is essential),
+# so check it with the same collector image before deploying.
+validate_collector() {
+  local image config
+  image="$(grep -o 'ghcr.io/open-telemetry/[^"]*' infra/main.tf | head -1)"
+  config="$(sed -e 's#${otlp_base}#https://example.invalid/api/1/integration/otlp#' \
+    -e 's#${sentry_key}#placeholder#' \
+    -e 's#${rds_log_group}#/aws/rds/instance/empower-aws/postgresql#g' \
+    -e 's#${ecs_log_group}#/empower-aws/ecs#g' infra/collector.yaml)"
+  docker run --rm -e OTEL_CONFIG="$config" "$image" validate --config=env:OTEL_CONFIG
+  echo "Collector config is valid."
+}
+
 seed_database() {
   local task status code
   task="$(aws ecs run-task --cluster "$(tf output -raw cluster)" --launch-type FARGATE \
@@ -167,6 +180,7 @@ for line in sys.stdin:
 
 task_deploy() {
   local tag; tag="$(git rev-parse --short=12 HEAD)"
+  validate_collector
   install_terraform
   tf_init
   tf apply -input=false -auto-approve -no-color -target=aws_ecr_repository.repo -target=aws_ecr_lifecycle_policy.repo | tail -2

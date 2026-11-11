@@ -305,7 +305,9 @@ locals {
 
   collector_config = templatefile("${path.module}/collector.yaml", {
     otlp_base  = "https://${local.sentry_org_host}/api/${local.store_project_id}/integration/otlp"
-    sentry_key = local.store_dsn_key
+    sentry_key    = local.store_dsn_key
+    rds_log_group = "/aws/rds/instance/${local.name}/postgresql"
+    ecs_log_group = aws_cloudwatch_log_group.ecs.name
   })
 }
 

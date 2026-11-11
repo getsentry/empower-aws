@@ -1,14 +1,54 @@
 # OTel Collector config, passed to the collector container as OTEL_CONFIG.
-# Receives the store API's OTLP spans and sends them to Sentry (backend-flask-otlp-aws).
-# CloudWatch logs (ECS, RDS) are added in a later step.
+# - Receives the store API's OTLP spans and logs.
+# - Polls CloudWatch for the RDS PostgreSQL log (slow queries, lock waits, errors) and
+#   the store and Redis container logs.
+# - Slow-query lines carry the SQL comment sqlcommenter added (traceparent='00-<trace>-<span>-01'),
+#   so their trace and span IDs are set from it and they show up in that trace in Sentry.
+# Everything goes to Sentry (backend-flask-otlp-aws).
 receivers:
   otlp:
     protocols:
       http:
         endpoint: 0.0.0.0:4318
 
+  awscloudwatch:
+    region: us-east-1
+    logs:
+      poll_interval: 30s
+      groups:
+        named:
+          ${rds_log_group}: {}
+          ${ecs_log_group}:
+            prefixes: [app/store, app/redis]
+
 processors:
   batch: {}
+
+  transform/cloudwatch:
+    error_mode: ignore
+    log_statements:
+      - context: resource
+        statements:
+          - set(attributes["service.name"], "rds-postgresql") where attributes["cloudwatch.log.group.name"] == "${rds_log_group}"
+          - set(attributes["service.name"], attributes["cloudwatch.log.stream"]) where attributes["cloudwatch.log.group.name"] == "${ecs_log_group}"
+          - replace_pattern(attributes["service.name"], "^app/([^/]+)/.*$", "ecs-$$1") where attributes["cloudwatch.log.group.name"] == "${ecs_log_group}"
+          - set(attributes["cloud.provider"], "aws")
+          - set(attributes["cloud.region"], "us-east-1")
+      - context: log
+        conditions:
+          - IsMatch(body, "traceparent='00-")
+        statements:
+          - merge_maps(cache, ExtractPatterns(body, "traceparent='00-(?P<trace_id>[0-9a-f]{32})-(?P<span_id>[0-9a-f]{16})-"), "upsert")
+          - set(trace_id.string, cache["trace_id"]) where cache["trace_id"] != nil
+          - set(span_id.string, cache["span_id"]) where cache["span_id"] != nil
+      - context: log
+        statements:
+          - set(severity_text, "INFO") where severity_text == ""
+          - set(severity_number, SEVERITY_NUMBER_INFO) where severity_number == SEVERITY_NUMBER_UNSPECIFIED
+          - set(severity_text, "WARN") where IsMatch(body, ":WARNING:|duration: [0-9]+")
+          - set(severity_number, SEVERITY_NUMBER_WARN) where IsMatch(body, ":WARNING:|duration: [0-9]+")
+          - set(severity_text, "ERROR") where IsMatch(body, ":(ERROR|FATAL|PANIC):|WORKER TIMEOUT|Traceback")
+          - set(severity_number, SEVERITY_NUMBER_ERROR) where IsMatch(body, ":(ERROR|FATAL|PANIC):|WORKER TIMEOUT|Traceback")
 
 exporters:
   otlphttp/sentry:
@@ -29,4 +69,8 @@ service:
     logs:
       receivers: [otlp]
       processors: [batch]
+      exporters: [otlphttp/sentry]
+    logs/cloudwatch:
+      receivers: [awscloudwatch]
+      processors: [transform/cloudwatch, batch]
       exporters: [otlphttp/sentry]
