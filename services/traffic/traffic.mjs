@@ -62,8 +62,8 @@ async function storefrontCheckout(page) {
     await add.nth(Math.floor(Math.random() * count)).click();
     await pause(page, 500, 1500);
   }
-  await page.locator('a[href="/cart"]').first().click();
-  await page.locator('a[href="/checkout-form"]').first().click();
+  await page.locator('a[href="/cart"]:visible').first().click();
+  await page.locator('a[href="/checkout-form"]:visible').first().click();
   await page.locator('.complete-checkout-btn').first().click();
   await page.waitForURL(/\/(complete|error)/, { timeout: 90000 });
   return page.url().includes('/complete') ? 'complete' : 'error page';
