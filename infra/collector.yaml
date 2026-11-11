@@ -45,8 +45,8 @@ processors:
         statements:
           - set(severity_text, "INFO") where severity_text == ""
           - set(severity_number, SEVERITY_NUMBER_INFO) where severity_number == SEVERITY_NUMBER_UNSPECIFIED
-          - set(severity_text, "WARN") where IsMatch(body, ":WARNING:|duration: [0-9]+")
-          - set(severity_number, SEVERITY_NUMBER_WARN) where IsMatch(body, ":WARNING:|duration: [0-9]+")
+          - 'set(severity_text, "WARN") where IsMatch(body, ":WARNING:|duration: [0-9]+")'
+          - 'set(severity_number, SEVERITY_NUMBER_WARN) where IsMatch(body, ":WARNING:|duration: [0-9]+")'
           - set(severity_text, "ERROR") where IsMatch(body, ":(ERROR|FATAL|PANIC):|WORKER TIMEOUT|Traceback")
           - set(severity_number, SEVERITY_NUMBER_ERROR) where IsMatch(body, ":(ERROR|FATAL|PANIC):|WORKER TIMEOUT|Traceback")
 
