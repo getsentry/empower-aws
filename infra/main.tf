@@ -185,7 +185,7 @@ resource "aws_db_instance" "main" {
 
 # ---------------------------------------------------------------------------- images and logs
 resource "aws_ecr_repository" "repo" {
-  for_each             = toset(["agent", "store", "seed"])
+  for_each             = toset(["agent", "store", "seed", "traffic"])
   name                 = "${local.name}/${each.key}"
   force_delete         = true
   image_tag_mutability = "MUTABLE"
@@ -651,7 +651,8 @@ output "custom_domain_dns" {
 }
 
 # ---------------------------------------------------------------------------- outputs
-output "url" { value = "https://${aws_cloudfront_distribution.main.domain_name}" }
+locals { public_url = local.domain_ready ? "https://${var.custom_domain}" : "https://${aws_cloudfront_distribution.main.domain_name}" }
+output "url" { value = local.public_url }
 output "distribution_id" { value = aws_cloudfront_distribution.main.id }
 output "storefront_bucket" { value = aws_s3_bucket.storefront.bucket }
 output "cluster" { value = aws_ecs_cluster.main.name }
@@ -660,3 +661,39 @@ output "seed_task_definition" { value = aws_ecs_task_definition.seed.arn }
 output "public_subnets" { value = join(",", aws_subnet.public[*].id) }
 output "task_security_group" { value = aws_security_group.task.id }
 output "ecr" { value = { for k, r in aws_ecr_repository.repo : k => r.repository_url } }
+
+# ---------------------------------------------------------------------------- traffic
+# A headless browser that shops on the storefront every ~15 minutes (services/traffic).
+# It needs no AWS permissions: it only browses the public URL.
+resource "aws_ecs_task_definition" "traffic" {
+  family                   = "${local.name}-traffic"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = 512
+  memory                   = 2048
+  execution_role_arn       = aws_iam_role.execution.arn
+  container_definitions = jsonencode([{
+    name      = "traffic"
+    image     = "${aws_ecr_repository.repo["traffic"].repository_url}:${var.image_tag}"
+    essential = true
+    environment = [
+      { name = "STOREFRONT_URL", value = local.public_url },
+      { name = "INTERVAL_MINUTES", value = "15" },
+      { name = "AGENT_MODEL", value = "haiku" },
+    ]
+    logConfiguration = local.log_config
+  }])
+}
+
+resource "aws_ecs_service" "traffic" {
+  name            = "${local.name}-traffic"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.traffic.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+  network_configuration {
+    subnets          = aws_subnet.public[*].id
+    security_groups  = [aws_security_group.task.id]
+    assign_public_ip = true
+  }
+}

@@ -93,7 +93,7 @@ build_and_push() {
   local tag="$1" registry
   registry="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${AWS_REGION}.amazonaws.com"
   aws ecr get-login-password | docker login --username AWS --password-stdin "$registry" >/dev/null
-  for pair in agent:services/agent store:services/store seed:db; do
+  for pair in agent:services/agent store:services/store seed:db traffic:services/traffic; do
     local name="${pair%%:*}" dir="${pair#*:}"
     docker build --quiet -t "${registry}/empower-aws/${name}:${tag}" "$dir" >/dev/null
     docker push --quiet "${registry}/empower-aws/${name}:${tag}" >/dev/null
@@ -196,6 +196,15 @@ task_deploy() {
   publish_storefront "$tag"
   aws ecs wait services-stable --cluster "$(tf output -raw cluster)" --services "$(tf output -raw service)"
   smoke_test
+  traffic_check "$tag"
+}
+
+# One run of every traffic flow in a real browser, using the image the traffic service runs.
+traffic_check() {
+  local registry
+  registry="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${AWS_REGION}.amazonaws.com"
+  docker run --rm --ipc=host -e STOREFRONT_URL="$(tf output -raw url)" \
+    "${registry}/empower-aws/traffic:$1" node traffic.mjs --once
 }
 
 task_on-push() {
