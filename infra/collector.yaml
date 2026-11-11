@@ -1,0 +1,32 @@
+# OTel Collector config, passed to the collector container as OTEL_CONFIG.
+# Receives the store API's OTLP spans and sends them to Sentry (backend-flask-otlp-aws).
+# CloudWatch logs (ECS, RDS) are added in a later step.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+exporters:
+  otlphttp/sentry:
+    traces_endpoint: ${otlp_base}/v1/traces
+    logs_endpoint: ${otlp_base}/v1/logs
+    headers:
+      x-sentry-auth: "sentry sentry_key=${sentry_key}"
+
+service:
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/sentry]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/sentry]

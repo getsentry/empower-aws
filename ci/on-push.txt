@@ -1,2 +1,2 @@
 # Tasks run on every push to main (see ci/run.sh).
-spike
+deploy

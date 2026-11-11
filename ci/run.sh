@@ -62,6 +62,125 @@ task_probe() {
   node spikes/bedrock-sentry/probe.mjs
 }
 
+TF_VERSION="1.17.1"
+tf() { terraform -chdir=infra "$@"; }
+
+install_terraform() {
+  if ! terraform version 2>/dev/null | grep -q "v${TF_VERSION}"; then
+    curl -fsSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o /tmp/tf.zip
+    mkdir -p "$HOME/bin" && unzip -o -q /tmp/tf.zip -d "$HOME/bin"
+    export PATH="$HOME/bin:$PATH"
+  fi
+  terraform version | head -1
+}
+
+tf_init() {
+  local account bucket
+  account="$(aws sts get-caller-identity --query Account --output text)"
+  bucket="empower-aws-tfstate-${account}"
+  if ! aws s3api head-bucket --bucket "$bucket" 2>/dev/null; then
+    aws s3api create-bucket --bucket "$bucket" >/dev/null
+    aws s3api put-bucket-versioning --bucket "$bucket" --versioning-configuration Status=Enabled
+    aws s3api put-public-access-block --bucket "$bucket" --public-access-block-configuration \
+      BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+    echo "Created state bucket ${bucket}."
+  fi
+  tf init -input=false -no-color -backend-config="bucket=${bucket}" >/dev/null
+  tf validate -no-color
+}
+
+build_and_push() {
+  local tag="$1" registry
+  registry="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${AWS_REGION}.amazonaws.com"
+  aws ecr get-login-password | docker login --username AWS --password-stdin "$registry" >/dev/null
+  for pair in agent:services/agent store:services/store seed:db; do
+    local name="${pair%%:*}" dir="${pair#*:}"
+    docker build --quiet -t "${registry}/empower-aws/${name}:${tag}" "$dir" >/dev/null
+    docker push --quiet "${registry}/empower-aws/${name}:${tag}" >/dev/null
+    echo "Pushed ${name}:${tag}"
+  done
+}
+
+seed_database() {
+  local task status code
+  task="$(aws ecs run-task --cluster "$(tf output -raw cluster)" --launch-type FARGATE \
+    --task-definition "$(tf output -raw seed_task_definition)" \
+    --network-configuration "awsvpcConfiguration={subnets=[$(tf output -raw public_subnets)],securityGroups=[$(tf output -raw task_security_group)],assignPublicIp=ENABLED}" \
+    --query 'tasks[0].taskArn' --output text)"
+  aws ecs wait tasks-stopped --cluster "$(tf output -raw cluster)" --tasks "$task"
+  code="$(aws ecs describe-tasks --cluster "$(tf output -raw cluster)" --tasks "$task" --query 'tasks[0].containers[0].exitCode' --output text)"
+  aws logs get-log-events --log-group-name /empower-aws/ecs --log-stream-name "app/seed/${task##*/}" \
+    --query 'events[].message' --output text 2>/dev/null | tail -5 || true
+  [[ "$code" == "0" ]] || { echo "Seed task failed (exit ${code})."; return 1; }
+}
+
+publish_storefront() {
+  local tag="$1"
+  (
+    cd services/storefront
+    npm ci --no-audit --no-fund --loglevel=error
+    export SENTRY_ORG=sentry-developer-experience REACT_SENTRY_PROJECT=frontend-aws
+    envsubst '${SENTRY_ORG} ${REACT_SENTRY_PROJECT}' < config-overrides.js.template > config-overrides.js
+    # CI is unset so Create React App doesn't turn lint warnings into errors.
+    env -u CI \
+      REACT_APP_DSN="https://9988cd868e2720af66c5b816105af760@o4509446862274560.ingest.us.sentry.io/4512387700817920" \
+      REACT_APP_RELEASE="$tag" \
+      REACT_APP_ENVIRONMENT="aws-demo" \
+      REACT_APP_BACKEND_URL_FLASK="/store" \
+      REACT_APP_BACKEND_URL_FLASKOTLP="/store" \
+      REACT_APP_BACKEND_URL_AGENT="/agent" \
+      npm run build >/tmp/storefront-build.log 2>&1 || { tail -40 /tmp/storefront-build.log; exit 1; }
+  )
+  local bucket; bucket="$(tf output -raw storefront_bucket)"
+  aws s3 sync services/storefront/build "s3://${bucket}" --delete --only-show-errors
+  aws s3 cp services/storefront/build/index.html "s3://${bucket}/index.html" --cache-control no-cache --only-show-errors
+  aws cloudfront create-invalidation --distribution-id "$(tf output -raw distribution_id)" --paths '/*' >/dev/null
+  echo "Published storefront ${tag}."
+}
+
+smoke_test() {
+  local url; url="$(tf output -raw url)"
+  echo "Storefront: ${url}"
+  for attempt in $(seq 1 30); do
+    if curl -fsS -o /dev/null "${url}/agent/health" && curl -fsS -o /dev/null "${url}/store/success"; then break; fi
+    echo "Waiting for ${url} (attempt ${attempt})..."; sleep 20
+  done
+  echo "products: $(curl -fsS "${url}/store/products" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))') items"
+  local conv="ci-${GITHUB_RUN_ID:-local}"
+  for message in "Show me plants under \$200" "Add one of each to the cart" "Checkout" "Apply Coupon" "Purchase"; do
+    echo "--- ${message}"
+    curl -sS -N --max-time 120 -X POST "${url}/agent/api/v1/chat" -H 'content-type: application/json' \
+      -H "x-conversation-id: ${conv}" -d "{\"message\": \"${message}\"}" \
+      | python3 -c '
+import json, sys
+event = None
+for line in sys.stdin:
+    line = line.rstrip("\n")
+    if line.startswith("event: "): event = line[7:]
+    elif line.startswith("data: ") and event not in ("token",):
+        data = json.loads(line[6:])
+        if event == "widget": print("  widget", data.get("type"), "ok" if (data.get("data") or {}).get("ok", True) else "FAILED")
+        elif event in ("status", "error", "done", "pills"): print(" ", event, json.dumps(data)[:160])'
+  done
+}
+
+task_deploy() {
+  local tag; tag="$(git rev-parse --short=12 HEAD)"
+  install_terraform
+  tf_init
+  tf apply -input=false -auto-approve -no-color -target=aws_ecr_repository.repo -target=aws_ecr_lifecycle_policy.repo | tail -2
+  build_and_push "$tag"
+  if ! tf apply -input=false -auto-approve -no-color -var "image_tag=${tag}" >/tmp/apply.log 2>&1; then
+    grep -E "Error|│" /tmp/apply.log | head -60
+    return 1
+  fi
+  grep "Apply complete" /tmp/apply.log
+  seed_database
+  publish_storefront "$tag"
+  aws ecs wait services-stable --cluster "$(tf output -raw cluster)" --services "$(tf output -raw service)"
+  smoke_test
+}
+
 task_on-push() {
   # Tasks to run on every push to main, one per line. Lines starting with # are skipped.
   while read -r t; do

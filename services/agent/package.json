@@ -1,0 +1,14 @@
+{
+  "name": "empower-aws-agent",
+  "private": true,
+  "type": "module",
+  "description": "Empower Plant shopping agent on Amazon Bedrock, traced by Sentry.",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "start": "node --import ./src/instrument.ts src/server.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3",
+    "@sentry/node": "11.11.0"
+  }
+}

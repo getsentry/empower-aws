@@ -1,0 +1,71 @@
+{
+  "name": "application-monitoring",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "@sentry/react": "~10.65.0",
+    "@statsig/js-client": "^3.15.0",
+    "@testing-library/jest-dom": "~5.11.4",
+    "@testing-library/react": "~11.1.0",
+    "@testing-library/user-event": "~12.1.10",
+    "history": "~5.3.0",
+    "react": "~17.0.2",
+    "react-dom": "~17.0.2",
+    "react-loader-spinner": "~4.0.0",
+    "react-redux": "~7.2.4",
+    "react-router-dom": "~6.3.0",
+    "react-scripts": "~5.0.1",
+    "redux": "~4.1.0",
+    "redux-logger": "~3.0.6",
+    "web-vitals": "~1.0.1"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "INLINE_RUNTIME_CHUNK=false react-app-rewired build && cp serve.json build/",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
+  "scriptsComments": {
+    "build": [
+      "INLINE_RUNTIME_CHUNK is needed to avoid source map processing error in Sentry when stacktrace includes inline JS",
+      "serve.json is needed to set headers that enable browser profiling"
+    ]
+  },
+  "engines": {
+    "npm": ">=10.0.0 <11.0.0",
+    "node": ">=22.0.0 <23.0.0"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "devDependencies": {
+    "@acemarke/react-prod-sourcemaps": "^0.2.1",
+    "@babel/plugin-proposal-private-property-in-object": "^7.21.11",
+    "@codecov/webpack-plugin": "^1.6.0",
+    "@sentry/webpack-plugin": "^3.5.0",
+    "install": "^0.13.0",
+    "jest-junit": "^16.0.0",
+    "npm": "^10.8.2",
+    "react-app-rewired": "~2.2.1",
+    "redux-mock-store": "^1.5.4"
+  },
+  "volta": {
+    "node": "22.11.0",
+    "npm": "10.5.0"
+  }
+}
