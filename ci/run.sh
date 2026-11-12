@@ -207,6 +207,19 @@ traffic_check() {
     "${registry}/empower-aws/traffic:$1" node traffic.mjs --once
 }
 
+# Where the custom domain stands: DNS records as public resolvers see them, and the certificate.
+task_domain() {
+  local domain="reinvent.sentry.dev" arn
+  for name in "$domain" "_faf6f563f977cc6efae388598ec54a64.${domain}"; do
+    echo "dns ${name} -> $(dig +short CNAME "$name" @8.8.8.8 | tr '\n' ' ')"
+  done
+  arn="$(aws acm list-certificates --certificate-statuses PENDING_VALIDATION ISSUED \
+    --query "CertificateSummaryList[?DomainName=='${domain}'].CertificateArn | [0]" --output text)"
+  echo "certificate $(aws acm describe-certificate --certificate-arn "$arn" \
+    --query 'Certificate.[Status, DomainValidationOptions[0].ValidationStatus]' --output text)"
+  curl -sS -o /dev/null -w "https://${domain} -> %{http_code}\n" "https://${domain}/" || true
+}
+
 task_on-push() {
   # Tasks to run on every push to main, one per line. Lines starting with # are skipped.
   while read -r t; do
