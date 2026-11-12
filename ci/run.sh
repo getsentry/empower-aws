@@ -246,6 +246,39 @@ task_domain() {
   curl -sS -o /dev/null -w "https://${domain} -> %{http_code}\n" "https://${domain}/" || true
 }
 
+# The demo's purchase flow N times per model. Every run must show the same five cards:
+# products, cart, checkout, the rejected coupon and the failed purchase.
+task_reliability() {
+  install_terraform >/dev/null; tf_init >/dev/null
+  local url runs="${RUNS:-10}" expected="products:ok cart:ok checkout:ok promo:FAILED confirmation:FAILED"
+  url="$(tf output -raw url)"
+  local failed=0
+  for model in haiku sonnet; do
+    local good=0
+    for n in $(seq 1 "$runs"); do
+      local conv="reliability-${model}-${GITHUB_RUN_ID:-local}-${n}" got=""
+      for message in "Show me plants under \$200" "Add one of each to the cart" "Checkout" "Apply Coupon" "Purchase"; do
+        got+="$(curl -sS -N --max-time 120 -X POST "${url}/agent/api/v1/chat?model=${model}" -H 'content-type: application/json' \
+          -H "x-conversation-id: ${conv}" -d "{\"message\": \"${message}\"}" | python3 -c '
+import json, sys
+event = None
+for line in sys.stdin:
+    line = line.rstrip("\n")
+    if line.startswith("event: "): event = line[7:]
+    elif line.startswith("data: ") and event == "widget":
+        d = json.loads(line[6:]); print(d.get("type") + ":" + ("ok" if (d.get("data") or {}).get("ok", True) else "FAILED"), end=" ")
+')"
+      done
+      got="${got% }"
+      if [[ "$got" == "$expected" ]]; then good=$((good + 1)); else echo "  ${conv}: ${got:-no cards}"; fi
+    done
+    echo "${model}: ${good}/${runs} runs showed every step"
+    echo "reliability_${model}=${good}/${runs}" >> "${CI_SUMMARY:-/tmp/ci-summary}"
+    [[ "$good" == "$runs" ]] || failed=1
+  done
+  return "$failed"
+}
+
 task_on-push() {
   # Tasks to run on every push to main, one per line. Lines starting with # are skipped.
   while read -r t; do
