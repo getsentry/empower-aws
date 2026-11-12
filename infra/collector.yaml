@@ -24,6 +24,14 @@ receivers:
 processors:
   batch: {}
 
+  # RDS logs every statement; bare transaction statements carry no trace ID and only
+  # clutter Sentry Logs, so they're dropped.
+  filter/rds_noise:
+    error_mode: ignore
+    logs:
+      log_record:
+        - 'IsMatch(body, "statement: (BEGIN|COMMIT|ROLLBACK)\\s*$")'
+
   transform/cloudwatch:
     error_mode: ignore
     log_statements:
@@ -73,5 +81,5 @@ service:
       exporters: [otlphttp/sentry]
     logs/cloudwatch:
       receivers: [awscloudwatch]
-      processors: [transform/cloudwatch, batch]
+      processors: [filter/rds_noise, transform/cloudwatch, batch]
       exporters: [otlphttp/sentry]
