@@ -146,14 +146,15 @@ resource "aws_db_subnet_group" "main" {
   subnet_ids = aws_subnet.private[*].id
 }
 
-# Slow queries and lock waits are logged with their SQL, which carries the trace ID
-# (sqlcommenter in the store API), so the collector can join them to the trace.
+# Every statement is logged with its SQL, which carries the trace ID (sqlcommenter in the
+# store API), so the collector joins RDS's own log lines to the request's trace. At demo
+# traffic that's a few thousand lines a day. Lock waits are logged too.
 resource "aws_db_parameter_group" "main" {
   name   = local.name
   family = "postgres16"
   parameter {
     name  = "log_min_duration_statement"
-    value = "250"
+    value = "0"
   }
   parameter {
     name  = "log_lock_waits"
