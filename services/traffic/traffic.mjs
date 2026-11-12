@@ -15,7 +15,7 @@ if (!BASE) throw new Error('STOREFRONT_URL is required');
 // (expired coupon, out-of-stock purchase); the browse flow should succeed.
 const FLOWS = [
   { name: 'agent-purchase', weight: 4, messages: ['Show me plants under $200', 'Add one of each to the cart', 'Checkout', 'Apply Coupon', 'Purchase'] },
-  { name: 'agent-browse', weight: 3, messages: ['Which plants do well in low light?', 'Add the first one to my cart', "What's in my cart?"] },
+  { name: 'agent-browse', weight: 3, messages: ['Which plants do well in low light?', 'Add one of each to the cart', "What's in my cart?"] },
   { name: 'agent-coupon', weight: 2, messages: ['Show me plants under $200', 'Add the cheapest one to my cart', 'Checkout', 'Apply Coupon'] },
   { name: 'storefront-checkout', weight: 2, run: storefrontCheckout },
 ];

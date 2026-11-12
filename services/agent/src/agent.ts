@@ -90,6 +90,18 @@ const PILLS: Record<string, { id: string; label: string }[]> = {
   purchase: PILLS_INITIAL,
 };
 
+// The chat's buttons send these exact messages. For them Bedrock is told which tool to
+// call (toolChoice), so a demo step can't be skipped by the model; it still makes the call
+// and writes the arguments, so the Sentry data is real. Free text is left to the model.
+const BUTTON_TOOLS: Record<string, string> = {
+  'show me plants under $200': 'search_products',
+  'add one of each to the cart': 'add_to_cart',
+  checkout: 'start_checkout',
+  'apply coupon': 'apply_coupon',
+  purchase: 'purchase',
+};
+const buttonTool = (message: string) => BUTTON_TOOLS[message.trim().toLowerCase()];
+
 export type Emit = (event: string, data: Record<string, unknown>) => void;
 
 type StreamedMessage = { message: Message; stopReason?: string };
@@ -98,6 +110,7 @@ async function converseStream(
   modelId: string,
   messages: Message[],
   emit: Emit,
+  forceTool?: string,
 ): Promise<StreamedMessage> {
   const system = PROMPT_CACHE
     ? [{ text: SYSTEM_PROMPT }, { cachePoint: { type: 'default' as const } }]
@@ -108,7 +121,7 @@ async function converseStream(
       modelId,
       system,
       messages,
-      toolConfig: { tools },
+      toolConfig: forceTool ? { tools, toolChoice: { tool: { name: forceTool } } } : { tools },
       inferenceConfig: { maxTokens: 400 },
     }),
   );
@@ -155,11 +168,16 @@ async function converseStream(
 }
 
 // Try the model's profiles in order; switch only on errors a retry won't fix in time.
-async function converseWithFallback(models: string[], messages: Message[], emit: Emit): Promise<StreamedMessage> {
+async function converseWithFallback(
+  models: string[],
+  messages: Message[],
+  emit: Emit,
+  forceTool?: string,
+): Promise<StreamedMessage> {
   let lastError: unknown;
   for (const [i, modelId] of models.entries()) {
     try {
-      return await converseStream(modelId, messages, emit);
+      return await converseStream(modelId, messages, emit, forceTool);
     } catch (error) {
       lastError = error;
       const name = (error as Error)?.name;
@@ -247,8 +265,10 @@ export async function runTurn(
         emit(event, data);
       };
 
-      // First call: the model picks a tool (or just answers).
-      const first = await converseWithFallback(models, messages, capture);
+      // First call: the model picks a tool (or just answers). A button's tool is required.
+      const forced = buttonTool(userMessage);
+      if (forced) agentSpan.setAttribute('gen_ai.request.tool_choice', forced);
+      const first = await converseWithFallback(models, messages, capture, forced);
       messages.push(first.message);
       const toolUses = (first.message.content ?? []).filter((b) => b.toolUse).map((b) => b.toolUse!);
 
@@ -293,6 +313,16 @@ export async function runTurn(
           textOnly.push({ text: fallback });
         }
         messages.push({ role: 'assistant', content: textOnly });
+      } else if (!reply.trim()) {
+        // No tool and no text (seen with Haiku): never leave the customer with an empty reply.
+        Sentry.logger.warn('Model returned neither text nor a tool call', {
+          'gen_ai.response.finish_reasons': first.stopReason ?? 'unknown',
+        });
+        const fallback = 'Sorry, I didn\'t catch that. Could you say it another way?';
+        capture('token', { text: fallback });
+        capture('message_end', { agent: agentRef() });
+        messages.pop();
+        messages.push({ role: 'assistant', content: [{ text: fallback }] });
       }
 
       session.history = trimHistory(messages);
