@@ -90,9 +90,10 @@ const PILLS: Record<string, { id: string; label: string }[]> = {
   purchase: PILLS_INITIAL,
 };
 
-// The chat's buttons send these exact messages. For them Bedrock is told which tool to
-// call (toolChoice), so a demo step can't be skipped by the model; it still makes the call
-// and writes the arguments, so the Sentry data is real. Free text is left to the model.
+// The chat's buttons send these exact messages. For them the model is offered only that
+// button's tool, so a demo step can't be skipped; it still makes the call and writes the
+// arguments, so the Sentry data is real. Free text gets every tool. (Claude 5.5 on Bedrock
+// rejects a forced toolChoice, so the tool list is narrowed instead.)
 const BUTTON_TOOLS: Record<string, string> = {
   'show me plants under $200': 'search_products',
   'add one of each to the cart': 'add_to_cart',
@@ -110,19 +111,23 @@ async function converseStream(
   modelId: string,
   messages: Message[],
   emit: Emit,
-  forceTool?: string,
+  onlyTool?: string,
 ): Promise<StreamedMessage> {
   const system = PROMPT_CACHE
     ? [{ text: SYSTEM_PROMPT }, { cachePoint: { type: 'default' as const } }]
     : [{ text: SYSTEM_PROMPT }];
-  const tools = PROMPT_CACHE ? [...TOOL_SPECS, { cachePoint: { type: 'default' as const } }] : TOOL_SPECS;
+  const tools = onlyTool
+    ? TOOL_SPECS.filter((t) => t.toolSpec?.name === onlyTool)
+    : PROMPT_CACHE
+      ? [...TOOL_SPECS, { cachePoint: { type: 'default' as const } }]
+      : TOOL_SPECS;
   const response: ConverseStreamCommandOutput = await client.send(
     new ConverseStreamCommand({
       modelId,
       system,
       messages,
-      toolConfig: forceTool ? { tools, toolChoice: { tool: { name: forceTool } } } : { tools },
-      inferenceConfig: { maxTokens: 400 },
+      toolConfig: { tools },
+      inferenceConfig: { maxTokens: 1024 },
     }),
   );
 
@@ -172,12 +177,12 @@ async function converseWithFallback(
   models: string[],
   messages: Message[],
   emit: Emit,
-  forceTool?: string,
+  onlyTool?: string,
 ): Promise<StreamedMessage> {
   let lastError: unknown;
   for (const [i, modelId] of models.entries()) {
     try {
-      return await converseStream(modelId, messages, emit, forceTool);
+      return await converseStream(modelId, messages, emit, onlyTool);
     } catch (error) {
       lastError = error;
       const name = (error as Error)?.name;
@@ -265,12 +270,22 @@ export async function runTurn(
         emit(event, data);
       };
 
-      // First call: the model picks a tool (or just answers). A button's tool is required.
-      const forced = buttonTool(userMessage);
-      if (forced) agentSpan.setAttribute('gen_ai.request.tool_choice', forced);
-      const first = await converseWithFallback(models, messages, capture, forced);
+      // First call: the model picks a tool (or just answers). A button offers only its tool,
+      // and gets one retry if the model still doesn't call it.
+      const onlyTool = buttonTool(userMessage);
+      if (onlyTool) agentSpan.setAttribute('empower.button_tool', onlyTool);
+      const toolUsesOf = (m: StreamedMessage) => (m.message.content ?? []).filter((b) => b.toolUse).map((b) => b.toolUse!);
+      let first = await converseWithFallback(models, messages, capture, onlyTool);
+      if (onlyTool && !toolUsesOf(first).length) {
+        Sentry.logger.warn(`Model skipped the ${onlyTool} button; retrying`, {
+          'gen_ai.response.finish_reasons': first.stopReason ?? 'unknown',
+        });
+        reply = '';
+        first = await converseWithFallback(models, messages, capture, onlyTool);
+      }
+      agentSpan.setAttribute('empower.first_stop_reason', first.stopReason ?? 'unknown');
       messages.push(first.message);
-      const toolUses = (first.message.content ?? []).filter((b) => b.toolUse).map((b) => b.toolUse!);
+      const toolUses = toolUsesOf(first);
 
       if (toolUses.length) {
         // One action per message, as in Empower: run the first tool, skip any others.
