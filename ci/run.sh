@@ -213,10 +213,15 @@ task_domain() {
   for name in "$domain" "_faf6f563f977cc6efae388598ec54a64.${domain}"; do
     echo "dns ${name} -> $(dig +short CNAME "$name" @8.8.8.8 | tr '\n' ' ')"
   done
-  arn="$(aws acm list-certificates --certificate-statuses PENDING_VALIDATION ISSUED \
-    --query "CertificateSummaryList[?DomainName=='${domain}'].CertificateArn | [0]" --output text)"
-  echo "certificate $(aws acm describe-certificate --certificate-arn "$arn" \
-    --query 'Certificate.[Status, DomainValidationOptions[0].ValidationStatus]' --output text)"
+  for name in "$domain" sentry.dev; do
+    echo "caa ${name} -> $(dig +short CAA "$name" @8.8.8.8 | tr '\n' ' ')"
+  done
+  for arn in $(aws acm list-certificates --includes keyTypes=RSA_2048 \
+      --certificate-statuses PENDING_VALIDATION ISSUED FAILED VALIDATION_TIMED_OUT \
+      --query "CertificateSummaryList[?DomainName=='${domain}'].CertificateArn" --output text); do
+    echo "certificate ${arn##*/} $(aws acm describe-certificate --certificate-arn "$arn" \
+      --query 'Certificate.[Status, FailureReason, DomainValidationOptions[0].ValidationStatus, CreatedAt]' --output text)"
+  done
   curl -sS -o /dev/null -w "https://${domain} -> %{http_code}\n" "https://${domain}/" || true
 }
 
