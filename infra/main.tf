@@ -642,6 +642,7 @@ resource "aws_acm_certificate" "custom" {
 locals { domain_ready = aws_acm_certificate.custom.status == "ISSUED" }
 
 output "custom_domain_status" { value = aws_acm_certificate.custom.status }
+output "custom_domain_certificate" { value = aws_acm_certificate.custom.arn }
 output "custom_domain_dns" {
   description = "DNS records to add in sentry.dev's zone."
   value = concat(

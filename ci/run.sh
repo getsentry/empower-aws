@@ -180,6 +180,15 @@ for line in sys.stdin:
   done
 }
 
+apply_all() {
+  local tag="$1"; shift
+  if ! tf apply -input=false -auto-approve -no-color -var "image_tag=${tag}" "$@" >/tmp/apply.log 2>&1; then
+    grep -E "Error|│" /tmp/apply.log | head -60
+    return 1
+  fi
+  grep "Apply complete" /tmp/apply.log
+}
+
 task_deploy() {
   local tag; tag="$(git rev-parse --short=12 HEAD)"
   validate_collector
@@ -187,11 +196,23 @@ task_deploy() {
   tf_init
   tf apply -input=false -auto-approve -no-color -target=aws_ecr_repository.repo -target=aws_ecr_lifecycle_policy.repo | tail -2
   build_and_push "$tag"
-  if ! tf apply -input=false -auto-approve -no-color -var "image_tag=${tag}" >/tmp/apply.log 2>&1; then
-    grep -E "Error|│" /tmp/apply.log | head -60
-    return 1
+  # A failed ACM certificate can't be retried; ask for a new one (same validation record).
+  local replace=()
+  if [[ "$(tf output -raw custom_domain_status 2>/dev/null)" == "FAILED" ]]; then
+    echo "Custom domain certificate FAILED; requesting a new one."
+    replace=(-replace=aws_acm_certificate.custom)
   fi
-  grep "Apply complete" /tmp/apply.log
+  apply_all "$tag" "${replace[@]}"
+  # A new certificate usually validates within minutes. Wait, then apply again so
+  # CloudFront picks up the custom domain in this same deploy.
+  if [[ "$(tf output -raw custom_domain_status)" == "PENDING_VALIDATION" ]]; then
+    if timeout 900 aws acm wait certificate-validated --certificate-arn "$(tf output -raw custom_domain_certificate)" 2>/dev/null; then
+      echo "Custom domain certificate issued."
+      apply_all "$tag"
+    else
+      echo "Custom domain certificate still $(aws acm describe-certificate --certificate-arn "$(tf output -raw custom_domain_certificate)" --query 'Certificate.[Status,FailureReason]' --output text)."
+    fi
+  fi
   seed_database
   publish_storefront "$tag"
   aws ecs wait services-stable --cluster "$(tf output -raw cluster)" --services "$(tf output -raw service)"
