@@ -647,7 +647,9 @@ output "custom_domain_dns" {
   description = "DNS records to add in sentry.dev's zone."
   value = concat(
     [for o in aws_acm_certificate.custom.domain_validation_options : "${o.resource_record_name} ${o.resource_record_type} ${o.resource_record_value}"],
-    ["${var.custom_domain}. CNAME ${aws_cloudfront_distribution.main.domain_name}"],
+    # ALIAS rather than CNAME so the CAA record can sit at the same name: sentry.dev's CAA
+    # records don't list Amazon, and a CAA record on the subdomain itself takes precedence.
+    ["${var.custom_domain}. ALIAS ${aws_cloudfront_distribution.main.domain_name}", "${var.custom_domain}. CAA 0 issue \"amazon.com\""],
   )
 }
 
