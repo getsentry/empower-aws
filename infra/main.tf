@@ -682,7 +682,7 @@ resource "aws_ecs_task_definition" "traffic" {
     environment = [
       { name = "STOREFRONT_URL", value = local.public_url },
       { name = "INTERVAL_MINUTES", value = "15" },
-      { name = "AGENT_MODEL", value = "haiku" },
+      { name = "AGENT_MODEL", value = "sonnet" },
     ]
     logConfiguration = local.log_config
   }])

@@ -109,9 +109,12 @@ export function trimHistory(history: Message[]): Message[] {
       if (!block.toolResult) continue;
       seen++;
       if (seen > 1) {
-        block.toolResult.content = [
-          { text: 'This tool ran earlier and the customer has already seen the result. Do not repeat it.' },
-        ];
+        const text = JSON.stringify(block.toolResult.content ?? []);
+        if (text.length > 1500) {
+          block.toolResult.content = [
+            { text: `${text.slice(0, 1500)}… (shortened; the customer already saw this result)` },
+          ];
+        }
       }
     }
   }

@@ -7,4 +7,5 @@ COPY . .
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8080
 # Two workers; each creates its own app, Sentry client and OTel exporter after the fork.
-CMD ["gunicorn", "--workers", "2", "--bind", "0.0.0.0:8080", "--timeout", "120", "app:app"]
+# empower-aws: threads, so a slow /products (pg_sleep on purpose) does not block /checkout.
+CMD ["gunicorn", "--workers", "3", "--threads", "8", "--worker-class", "gthread", "--bind", "0.0.0.0:8080", "--timeout", "120", "app:app"]

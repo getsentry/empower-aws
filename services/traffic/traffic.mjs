@@ -1,13 +1,13 @@
 // Scheduled demo traffic: a real headless browser uses the storefront like a shopper,
 // so Sentry gets the whole trace (browser → agent → Bedrock → store API → RDS).
-// Runs as its own ECS service and loops: one session, then sleep about INTERVAL_MINUTES.
+// Runs as its own ECS service and loops: one session, then sleep about INTERVAL_MINUTES. Uses Sonnet, the model SEs demo with.
 //   node traffic.mjs            loop forever
 //   node traffic.mjs --once     one session of each flow, exit non-zero if any failed (CI)
 import { chromium } from 'playwright-core';
 
 const BASE = (process.env.STOREFRONT_URL || '').replace(/\/$/, '');
 const INTERVAL_MINUTES = Number(process.env.INTERVAL_MINUTES || 15);
-const MODEL = process.env.AGENT_MODEL || 'haiku';
+const MODEL = process.env.AGENT_MODEL || 'sonnet';
 const ONCE = process.argv.includes('--once');
 if (!BASE) throw new Error('STOREFRONT_URL is required');
 

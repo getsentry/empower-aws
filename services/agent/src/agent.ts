@@ -274,7 +274,12 @@ export async function runTurn(
       // and gets one retry if the model still doesn't call it.
       const onlyTool = buttonTool(userMessage);
       if (onlyTool) agentSpan.setAttribute('empower.button_tool', onlyTool);
-      const toolUsesOf = (m: StreamedMessage) => (m.message.content ?? []).filter((b) => b.toolUse).map((b) => b.toolUse!);
+      // Haiku sometimes names a tool it wasn't offered (from the system prompt), so a
+      // button only accepts its own tool.
+      const toolUsesOf = (m: StreamedMessage) =>
+        (m.message.content ?? [])
+          .filter((b) => b.toolUse && (!onlyTool || b.toolUse.name === onlyTool))
+          .map((b) => b.toolUse!);
       let first = await converseWithFallback(models, messages, capture, onlyTool);
       if (onlyTool && !toolUsesOf(first).length) {
         Sentry.logger.warn(`Model skipped the ${onlyTool} button; retrying`, {
@@ -284,6 +289,9 @@ export async function runTurn(
         first = await converseWithFallback(models, messages, capture, onlyTool);
       }
       agentSpan.setAttribute('empower.first_stop_reason', first.stopReason ?? 'unknown');
+      if (onlyTool) {
+        first.message.content = (first.message.content ?? []).filter((b) => !b.toolUse || b.toolUse.name === onlyTool);
+      }
       messages.push(first.message);
       const toolUses = toolUsesOf(first);
 
