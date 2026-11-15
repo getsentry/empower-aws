@@ -110,6 +110,12 @@ BUTTON_TOOLS = {
 }
 
 
+def _collects(kind: str) -> bool:
+    """Whether data_collection allows gen_ai inputs/outputs; our own spans follow it too."""
+    options = sentry_sdk.get_client().options.get("data_collection") or {}
+    return bool((options.get("gen_ai") or {}).get(kind))
+
+
 def _converse_stream(model_id: str, messages: list, emit, only_tool: str | None):
     system = [{"text": SYSTEM_PROMPT}]
     if PROMPT_CACHE:
@@ -229,10 +235,11 @@ def run_turn(session, user_message: str, headers: dict, model_key: str, emit) ->
         agent_span.set_data("gen_ai.operation.name", "invoke_agent")
         agent_span.set_data("gen_ai.agent.name", AGENT_NAME)
         agent_span.set_data("gen_ai.request.model", models[0])
-        agent_span.set_data(
-            "gen_ai.input.messages",
-            json.dumps([{"role": "user", "parts": [{"type": "text", "content": user_message}]}]),
-        )
+        if _collects("inputs"):
+            agent_span.set_data(
+                "gen_ai.input.messages",
+                json.dumps([{"role": "user", "parts": [{"type": "text", "content": user_message}]}]),
+            )
         messages = [*session.history, {"role": "user", "content": [{"text": user_message}]}]
 
         # First call: the model picks a tool (or just answers). A button offers only its
@@ -318,9 +325,10 @@ def run_turn(session, user_message: str, headers: dict, model_key: str, emit) ->
             messages[-1] = {"role": "assistant", "content": [{"text": fallback}]}
 
         session.history = trim_history(messages)
-        agent_span.set_data(
-            "gen_ai.output.messages",
-            json.dumps([{"role": "assistant", "parts": [{"type": "text", "content": reply}]}]),
-        )
+        if _collects("outputs"):
+            agent_span.set_data(
+                "gen_ai.output.messages",
+                json.dumps([{"role": "assistant", "parts": [{"type": "text", "content": reply}]}]),
+            )
 
     emit("pills", {"pills": PILLS.get(session.last_tool or "", PILLS_INITIAL)})

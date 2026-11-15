@@ -2,8 +2,12 @@
 
 The boto3 integration (on by default, Bedrock support since sentry-sdk 2.75.0) creates a
 gen_ai.chat span for every Bedrock Converse/ConverseStream call, with the model, tokens,
-finish reason and, with send_default_pii, the prompt and reply. The agent and tool spans
-are added by hand in agent.py, as in the TypeScript agent.
+cached tokens, cost and finish reason. The agent and tool spans are added by hand in
+agent.py, as in the TypeScript agent.
+
+Privacy story: data_collection keeps what customers type out of Sentry (gen_ai inputs off)
+but keeps the model's replies (outputs on). Tokens, cost and cache usage are recorded
+either way. (send_default_pii is deprecated and ignored once data_collection is set.)
 """
 import os
 
@@ -30,8 +34,8 @@ sentry_sdk.init(
     release=os.environ.get("SENTRY_RELEASE"),
     traces_sample_rate=1.0,
     enable_logs=True,
-    # Prompts and replies on the Bedrock spans. The demo has no real customer data.
-    send_default_pii=True,
+    # What customers say stays out of Sentry; how the model answers is kept.
+    data_collection={"gen_ai": {"inputs": False, "outputs": True}},
     # Trace headers go to the store API next to us, never to AWS.
     trace_propagation_targets=[r"^https?://(localhost|127\.0\.0\.1)(:\d+)?/"],
     before_send_transaction=_stamp_conversation,
