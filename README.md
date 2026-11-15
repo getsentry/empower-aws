@@ -32,6 +32,7 @@ these replace them:
 |---|---|---|
 | backend-flask-otlp-aws | `src/` | `services/store/src/` |
 | agent-aws | `/app/` | `services/agent/` |
+| agent-python-aws | `/app/` | `services/agent-python/` |
 
 Suspect commits are worked out when an event arrives, so events from before a mapping
 change show none.
