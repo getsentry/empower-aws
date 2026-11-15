@@ -38,6 +38,8 @@ locals {
   # Public client keys (DSNs) for sentry-developer-experience. Not secrets.
   sentry_org_host  = "o4509446862274560.ingest.us.sentry.io"
   agent_dsn        = "https://473b6873169a9cca336b0c725a0a53a5@${local.sentry_org_host}/4512387700883456"
+  # agent-python-aws: the Python agent (Sentry Python SDK), reached with ?agent=python.
+  agent_python_dsn = "https://fabf8e6470d5017ae371de171ab74c97@${local.sentry_org_host}/4512437399060480"
   store_dsn        = "https://8e3075bd45125d063b66b5d778aacfcf@${local.sentry_org_host}/4512387700948992"
   store_project_id = "4512387700948992"
   store_dsn_key    = "8e3075bd45125d063b66b5d778aacfcf"
@@ -186,7 +188,7 @@ resource "aws_db_instance" "main" {
 
 # ---------------------------------------------------------------------------- images and logs
 resource "aws_ecr_repository" "repo" {
-  for_each             = toset(["agent", "store", "seed", "traffic"])
+  for_each             = toset(["agent", "agent-python", "store", "seed", "traffic"])
   name                 = "${local.name}/${each.key}"
   force_delete         = true
   image_tag_mutability = "MUTABLE"
@@ -342,6 +344,23 @@ resource "aws_ecs_task_definition" "app" {
       logConfiguration = local.log_config
     },
     {
+      # The same agent in Python, on the Sentry Python SDK (services/agent-python).
+      name         = "agent-python"
+      image        = "${aws_ecr_repository.repo["agent-python"].repository_url}:${var.image_tag}"
+      essential    = true
+      portMappings = [{ containerPort = 8001 }]
+      environment = [
+        { name = "SENTRY_DSN", value = local.agent_python_dsn },
+        { name = "SENTRY_RELEASE", value = var.image_tag },
+        { name = "SENTRY_ENVIRONMENT", value = local.environment },
+        { name = "AWS_REGION", value = "us-east-1" },
+        { name = "STORE_URL", value = "http://localhost:8080" },
+        { name = "PORT", value = "8001" },
+      ]
+      dependsOn        = [{ containerName = "store", condition = "START" }]
+      logConfiguration = local.log_config
+    },
+    {
       name         = "store"
       image        = "${aws_ecr_repository.repo["store"].repository_url}:${var.image_tag}"
       essential    = true
@@ -424,11 +443,16 @@ resource "aws_ecs_service" "app" {
     container_port   = 8000
   }
   load_balancer {
+    target_group_arn = aws_lb_target_group.agent_python.arn
+    container_name   = "agent-python"
+    container_port   = 8001
+  }
+  load_balancer {
     target_group_arn = aws_lb_target_group.store.arn
     container_name   = "store"
     container_port   = 8080
   }
-  depends_on = [aws_lb_listener_rule.agent]
+  depends_on = [aws_lb_listener_rule.agent, aws_lb_listener_rule.agent_python]
 }
 
 # ---------------------------------------------------------------------------- load balancer
@@ -464,6 +488,18 @@ resource "aws_lb_target_group" "agent" {
   }
 }
 
+resource "aws_lb_target_group" "agent_python" {
+  name        = "${local.name}-agent-py"
+  port        = 8001
+  protocol    = "HTTP"
+  target_type = "ip"
+  vpc_id      = aws_vpc.main.id
+  health_check {
+    path    = "/agent-py/health"
+    matcher = "200"
+  }
+}
+
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.main.arn
   port              = 80
@@ -483,6 +519,18 @@ resource "aws_lb_listener_rule" "agent" {
   action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.agent.arn
+  }
+}
+
+resource "aws_lb_listener_rule" "agent_python" {
+  listener_arn = aws_lb_listener.http.arn
+  priority     = 11
+  condition {
+    path_pattern { values = ["/agent-py", "/agent-py/*"] }
+  }
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.agent_python.arn
   }
 }
 
@@ -605,6 +653,16 @@ resource "aws_cloudfront_distribution" "main" {
 
   ordered_cache_behavior {
     path_pattern             = "/agent/*"
+    target_origin_id         = "alb"
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+    cached_methods           = ["GET", "HEAD"]
+    cache_policy_id          = data.aws_cloudfront_cache_policy.disabled.id
+    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer.id
+  }
+
+  ordered_cache_behavior {
+    path_pattern             = "/agent-py/*"
     target_origin_id         = "alb"
     viewer_protocol_policy   = "redirect-to-https"
     allowed_methods          = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]

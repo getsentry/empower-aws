@@ -35,3 +35,22 @@ these replace them:
 
 Suspect commits are worked out when an event arrives, so events from before a mapping
 change show none.
+
+## Two agents: TypeScript (default) and Python
+
+The chat runs on the TypeScript agent (`services/agent`, Sentry JavaScript SDK) unless the
+page is opened with `?agent=python`, which sends it to the Python agent
+(`services/agent-python`, Sentry Python SDK 2.75+, Sentry project `agent-python-aws`). The
+choice is remembered for the tab, like `?se=`. Both have the same tools, prompt and SSE
+contract, and both trace into the same store API.
+
+- `/agent/*` → TypeScript agent (port 8000); `/agent-py/*` → Python agent (port 8001).
+- Bedrock spans come from each SDK's AWS integration; the `invoke_agent` and
+  `execute_tool` spans are added by hand in both.
+- Python notes: the agent is ASGI (Starlette), because Sentry's WSGI middleware ends the
+  transaction before a streamed response is sent. SDK 2.75 sends gen_ai spans as separate
+  span items next to the transaction. `set_conversation_id` isn't copied onto the Bedrock
+  spans by the SDK yet, so the agent stamps `gen_ai.conversation.id` in
+  `before_send_transaction`.
+- Scheduled traffic picks one agent per session; CI's smoke test and `reliability` task run
+  both.

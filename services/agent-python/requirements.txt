@@ -1,0 +1,6 @@
+# 2.75.0 added Bedrock Converse/ConverseStream to the boto3 integration.
+sentry-sdk==2.75.0
+boto3>=1.40
+requests>=2.32
+starlette>=0.47
+uvicorn>=0.35

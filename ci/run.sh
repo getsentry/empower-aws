@@ -93,7 +93,7 @@ build_and_push() {
   local tag="$1" registry
   registry="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${AWS_REGION}.amazonaws.com"
   aws ecr get-login-password | docker login --username AWS --password-stdin "$registry" >/dev/null
-  for pair in agent:services/agent store:services/store seed:db traffic:services/traffic; do
+  for pair in agent:services/agent agent-python:services/agent-python store:services/store seed:db traffic:services/traffic; do
     local name="${pair%%:*}" dir="${pair#*:}"
     docker build --quiet -t "${registry}/empower-aws/${name}:${tag}" "$dir" >/dev/null
     docker push --quiet "${registry}/empower-aws/${name}:${tag}" >/dev/null
@@ -142,6 +142,7 @@ publish_storefront() {
       REACT_APP_BACKEND_URL_FLASK="/store" \
       REACT_APP_BACKEND_URL_FLASKOTLP="/store" \
       REACT_APP_BACKEND_URL_AGENT="/agent" \
+      REACT_APP_BACKEND_URL_AGENT_PYTHON="/agent-py" \
       npm run build >/tmp/storefront-build.log 2>&1 || { tail -40 /tmp/storefront-build.log; exit 1; }
   )
   local bucket; bucket="$(tf output -raw storefront_bucket)"
@@ -158,14 +159,19 @@ smoke_test() {
   tf output -json custom_domain_dns | python3 -c 'import json,sys; [print("  dns", r) for r in json.load(sys.stdin)]'
   echo "url=${url}" >> "${CI_SUMMARY:-/tmp/ci-summary}"
   for attempt in $(seq 1 30); do
-    if curl -fsS -o /dev/null "${url}/agent/health" && curl -fsS -o /dev/null "${url}/store/success"; then break; fi
+    if curl -fsS -o /dev/null "${url}/agent/health" && curl -fsS -o /dev/null "${url}/agent-py/health" \
+      && curl -fsS -o /dev/null "${url}/store/success"; then break; fi
     echo "Waiting for ${url} (attempt ${attempt})..."; sleep 20
   done
   echo "products: $(curl -fsS "${url}/store/products" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))') items"
-  local conv="ci-${GITHUB_RUN_ID:-local}"
+  # The demo flow on both agents: /agent (TypeScript, JS SDK) and /agent-py (Python SDK).
+  local agent
+  for agent in agent agent-py; do
+  echo "=== ${agent}"
+  local conv="ci-${GITHUB_RUN_ID:-local}-${agent}"
   for message in "Show me plants under \$200" "Add one of each to the cart" "Checkout" "Apply Coupon" "Purchase"; do
     echo "--- ${message}"
-    curl -sS -N --max-time 120 -X POST "${url}/agent/api/v1/chat" -H 'content-type: application/json' \
+    curl -sS -N --max-time 120 -X POST "${url}/${agent}/api/v1/chat" -H 'content-type: application/json' \
       -H "x-conversation-id: ${conv}" -d "{\"message\": \"${message}\"}" \
       | python3 -c '
 import json, sys
@@ -177,6 +183,7 @@ for line in sys.stdin:
         data = json.loads(line[6:])
         if event == "widget": print("  widget", data.get("type"), "ok" if (data.get("data") or {}).get("ok", True) else "FAILED")
         elif event in ("status", "error", "done", "pills"): print(" ", event, json.dumps(data)[:160])'
+  done
   done
 }
 
@@ -253,12 +260,14 @@ task_reliability() {
   local url runs="${RUNS:-10}" expected="products:ok cart:ok checkout:ok promo:FAILED confirmation:FAILED"
   url="$(tf output -raw url)"
   local failed=0
-  for model in haiku sonnet; do
+  local agent model
+  for combo in ${RELIABILITY_COMBOS:-agent:sonnet agent-py:sonnet agent:haiku agent-py:haiku}; do
+    agent="${combo%%:*}" model="${combo#*:}"
     local good=0
     for n in $(seq 1 "$runs"); do
-      local conv="reliability-${model}-${GITHUB_RUN_ID:-local}-${n}" got=""
+      local conv="reliability-${agent}-${model}-${GITHUB_RUN_ID:-local}-${n}" got=""
       for message in "Show me plants under \$200" "Add one of each to the cart" "Checkout" "Apply Coupon" "Purchase"; do
-        got+="$(curl -sS -N --max-time 120 -X POST "${url}/agent/api/v1/chat?model=${model}" -H 'content-type: application/json' \
+        got+="$(curl -sS -N --max-time 120 -X POST "${url}/${agent}/api/v1/chat?model=${model}" -H 'content-type: application/json' \
           -H "x-conversation-id: ${conv}" -d "{\"message\": \"${message}\"}" | python3 -c '
 import json, sys
 event = None
@@ -272,8 +281,8 @@ for line in sys.stdin:
       got="${got% }"
       if [[ "$got" == "$expected" ]]; then good=$((good + 1)); else echo "  ${conv}: ${got:-no cards}"; fi
     done
-    echo "${model}: ${good}/${runs} runs showed every step"
-    echo "reliability_${model}=${good}/${runs}" >> "${CI_SUMMARY:-/tmp/ci-summary}"
+    echo "${agent} ${model}: ${good}/${runs} runs showed every step"
+    echo "reliability_${agent}_${model}=${good}/${runs}" >> "${CI_SUMMARY:-/tmp/ci-summary}"
     [[ "$good" == "$runs" ]] || failed=1
   done
   return "$failed"

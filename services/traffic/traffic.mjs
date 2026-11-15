@@ -8,6 +8,9 @@ import { chromium } from 'playwright-core';
 const BASE = (process.env.STOREFRONT_URL || '').replace(/\/$/, '');
 const INTERVAL_MINUTES = Number(process.env.INTERVAL_MINUTES || 15);
 const MODEL = process.env.AGENT_MODEL || 'sonnet';
+// Each session uses one agent: the TypeScript one (JS SDK, the default) or the Python one
+// (Python SDK, ?agent=python), so both stay populated in Sentry.
+const AGENTS = (process.env.AGENTS || 'typescript,python').split(',');
 const ONCE = process.argv.includes('--once');
 if (!BASE) throw new Error('STOREFRONT_URL is required');
 
@@ -23,8 +26,9 @@ const FLOWS = [
 const log = (fields) => console.log(JSON.stringify({ time: new Date().toISOString(), ...fields }));
 const pause = (page, min, max) => page.waitForTimeout(min + Math.random() * (max - min));
 
-async function openChat(page) {
-  await page.goto(`${BASE}/?se=traffic&agent_model=${MODEL}`, { waitUntil: 'domcontentloaded' });
+async function openChat(page, agent) {
+  const agentParam = agent === 'python' ? '&agent=python' : '';
+  await page.goto(`${BASE}/?se=traffic&agent_model=${MODEL}${agentParam}`, { waitUntil: 'domcontentloaded' });
   const input = page.locator('#chat-message-input').first();
   if (!(await input.isVisible({ timeout: 5000 }).catch(() => false))) {
     for (const selector of ['.hero-agent-button', '.chat-toggle-button']) {
@@ -39,8 +43,8 @@ async function openChat(page) {
   return input;
 }
 
-async function chat(page, messages) {
-  const input = await openChat(page);
+async function chat(page, messages, agent) {
+  const input = await openChat(page, agent);
   for (const message of messages) {
     await input.fill(message);
     await page.locator('#chat-send-button').first().click();
@@ -69,19 +73,19 @@ async function storefrontCheckout(page) {
   return page.url().includes('/complete') ? 'complete' : 'error page';
 }
 
-async function runFlow(browser, flow) {
+async function runFlow(browser, flow, agent = 'typescript') {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
   const started = Date.now();
   try {
-    const result = flow.run ? await flow.run(page) : await chat(page, flow.messages);
+    const result = flow.run ? await flow.run(page) : await chat(page, flow.messages, agent);
     await pause(page, 3000, 5000);
     await page.goto('about:blank'); // pagehide lets the Sentry SDK flush the last transaction
     await page.waitForTimeout(2000);
-    log({ flow: flow.name, ok: true, result, seconds: Math.round((Date.now() - started) / 1000) });
+    log({ flow: flow.name, agent: flow.run ? undefined : agent, ok: true, result, seconds: Math.round((Date.now() - started) / 1000) });
     return true;
   } catch (error) {
-    log({ flow: flow.name, ok: false, error: String(error).slice(0, 300), url: page.url() });
+    log({ flow: flow.name, agent: flow.run ? undefined : agent, ok: false, error: String(error).slice(0, 300), url: page.url() });
     return false;
   } finally {
     await context.close();
@@ -96,13 +100,15 @@ function pickFlow() {
 const browser = await chromium.launch();
 if (ONCE) {
   let ok = true;
-  for (const flow of FLOWS) ok = (await runFlow(browser, flow)) && ok;
+  // Every flow once on the default agent, plus the purchase flow on each other agent.
+  for (const flow of FLOWS) ok = (await runFlow(browser, flow, AGENTS[0])) && ok;
+  for (const agent of AGENTS.slice(1)) ok = (await runFlow(browser, FLOWS[0], agent)) && ok;
   await browser.close();
   process.exit(ok ? 0 : 1);
 }
-log({ started: true, base: BASE, model: MODEL, intervalMinutes: INTERVAL_MINUTES });
+log({ started: true, base: BASE, model: MODEL, agents: AGENTS, intervalMinutes: INTERVAL_MINUTES });
 for (;;) {
-  await runFlow(browser, pickFlow());
+  await runFlow(browser, pickFlow(), AGENTS[Math.floor(Math.random() * AGENTS.length)]);
   const minutes = INTERVAL_MINUTES * (0.7 + Math.random() * 0.6);
   await new Promise((resolve) => setTimeout(resolve, minutes * 60000));
 }

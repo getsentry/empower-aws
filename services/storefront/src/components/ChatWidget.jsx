@@ -16,6 +16,14 @@ import postEventStream from '../utils/sseStream';
 // is in flight, since a slow product fetch is not user inactivity.
 const CHAT_SESSION_INACTIVITY_TIMEOUT_MS = 120000;
 const AGENT_URL = process.env.REACT_APP_BACKEND_URL_AGENT;
+// empower-aws: ?agent=python sends the chat to the Python agent (Sentry Python SDK)
+// instead of the TypeScript one (Sentry JavaScript SDK). Remembered for the tab, like ?se.
+const AGENT_PYTHON_URL = process.env.REACT_APP_BACKEND_URL_AGENT_PYTHON || '/agent-py';
+const agentBaseUrl = (pageParams) => {
+  const choice = pageParams.get('agent');
+  if (choice) sessionStorage.setItem('agent', choice);
+  return (choice || sessionStorage.getItem('agent')) === 'python' ? AGENT_PYTHON_URL : AGENT_URL;
+};
 
 // Shown before the first turn. After that the agent sends pills itself.
 const INITIAL_PILLS = [
@@ -225,7 +233,7 @@ const ChatWidget = ({ fullView = false, onExitFull }) => {
     const agentModel = pageParams.get('agent_model');
     if (agentModel) params.set('model', agentModel);
     const query = params.toString();
-    return `${AGENT_URL}/api/v1/chat${query ? `?${query}` : ''}`;
+    return `${agentBaseUrl(pageParams)}/api/v1/chat${query ? `?${query}` : ''}`;
   };
 
   // Run one turn: post the message, then fold the SSE events into messages.
