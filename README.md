@@ -20,3 +20,18 @@ marked with `empower-aws:` comments.
 
 Every push to `main` deploys (`ci/on-push.txt`) and reports the result to the `ci-aws`
 Sentry project. Shut everything down after re:Invent with `terraform destroy` in `infra`.
+
+## Sentry code mappings (suspect commits)
+
+Suspect commits and source links come from the getsentry GitHub integration in
+`sentry-developer-experience`, through these code mappings (Settings → Integrations →
+GitHub → Code Mappings). Sentry had generated wrong ones automatically from file names;
+these replace them:
+
+| Project | Stack trace root | Source root in getsentry/empower-aws |
+|---|---|---|
+| backend-flask-otlp-aws | `src/` | `services/store/src/` |
+| agent-aws | `/app/` | `services/agent/` |
+
+Suspect commits are worked out when an event arrives, so events from before a mapping
+change show none.
