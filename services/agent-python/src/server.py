@@ -25,7 +25,6 @@ from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
 from .agent import run_turn
-from .instrument import CONVERSATION_TAG
 from .session import get_session
 from .tools import DEMO_HEADERS
 
@@ -53,8 +52,8 @@ async def chat(request):
     if not message:
         return JSONResponse({"detail": "message is required"}, status_code=400)
 
+    # The SDK copies this onto every gen_ai span when it finishes, Bedrock's included.
     sentry_sdk.ai.set_conversation_id(conversation_id)
-    sentry_sdk.set_tag(CONVERSATION_TAG, conversation_id)  # read by instrument._stamp_conversation
     headers = {name: v for name in DEMO_HEADERS if (v := _header(request, name))}
     for name in ("se", "customerType", "cexp"):
         if name in headers:

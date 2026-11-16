@@ -13,21 +13,6 @@ import os
 
 import sentry_sdk
 
-CONVERSATION_TAG = "conversation_id"
-
-
-def _stamp_conversation(event, hint):
-    # sentry_sdk.ai.set_conversation_id() stores the ID on the scope, but the Bedrock
-    # integration doesn't copy it onto its spans (only the OpenAI integrations do), so
-    # Explore -> Agents couldn't group a chat's turns. Stamp it onto every gen_ai span.
-    conversation_id = (event.get("tags") or {}).get(CONVERSATION_TAG)
-    if conversation_id:
-        for span in event.get("spans") or []:
-            if str(span.get("op", "")).startswith("gen_ai."):
-                span.setdefault("data", {})["gen_ai.conversation.id"] = conversation_id
-    return event
-
-
 sentry_sdk.init(
     dsn=os.environ.get("SENTRY_DSN"),
     environment=os.environ.get("SENTRY_ENVIRONMENT", "aws-demo"),
@@ -38,5 +23,4 @@ sentry_sdk.init(
     data_collection={"gen_ai": {"inputs": False, "outputs": True}},
     # Trace headers go to the store API next to us, never to AWS.
     trace_propagation_targets=[r"^https?://(localhost|127\.0\.0\.1)(:\d+)?/"],
-    before_send_transaction=_stamp_conversation,
 )

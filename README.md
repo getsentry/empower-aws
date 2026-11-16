@@ -50,8 +50,11 @@ contract, and both trace into the same store API.
   `execute_tool` spans are added by hand in both.
 - Python notes: the agent is ASGI (Starlette), because Sentry's WSGI middleware ends the
   transaction before a streamed response is sent. SDK 2.75 sends gen_ai spans as separate
-  span items next to the transaction. `set_conversation_id` isn't copied onto the Bedrock
-  spans by the SDK yet, so the agent stamps `gen_ai.conversation.id` in
-  `before_send_transaction`.
+  span items next to the transaction, and copies `set_conversation_id` onto every gen_ai
+  span (Bedrock's included) when it finishes.
+- The Python agent sets `data_collection={"gen_ai": {"inputs": False, "outputs": True}}`:
+  what customers type stays out of Sentry, the model's replies, tokens, cost and cache usage
+  are kept. Sentry titles conversations from the first user message, so these show as
+  "Untitled conversation".
 - Scheduled traffic picks one agent per session; CI's smoke test and `reliability` task run
   both.
