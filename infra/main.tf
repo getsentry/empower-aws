@@ -747,11 +747,17 @@ resource "aws_ecs_task_definition" "traffic" {
   }])
 }
 
+# Paused until closer to re:Invent: set to true and push to start the shopper again.
+variable "traffic_enabled" {
+  type    = bool
+  default = false
+}
+
 resource "aws_ecs_service" "traffic" {
   name            = "${local.name}-traffic"
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.traffic.arn
-  desired_count   = 1
+  desired_count   = var.traffic_enabled ? 1 : 0
   launch_type     = "FARGATE"
   network_configuration {
     subnets          = aws_subnet.public[*].id
