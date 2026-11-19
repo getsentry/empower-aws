@@ -46,11 +46,15 @@ async function chat(req: IncomingMessage, res: ServerResponse, url: URL) {
     const value = header(req, name);
     if (value) headers[name] = value;
   }
-  if (headers.se) Sentry.setTag('se', headers.se);
-  if (headers.customerType) Sentry.setTag('customerType', headers.customerType);
-  if (headers.cexp) Sentry.setTag('cexp', headers.cexp);
   const modelKey = url.searchParams.get('model') === 'haiku' ? 'haiku' : 'sonnet';
-  Sentry.setTag('agent.model', modelKey);
+  // SDK v11 sends spans as they end, and those carry attributes, not scope tags (see the SDK's
+  // MIGRATION.md, "Scope tags and extra are not applied to spans"). Tags still go on errors.
+  const demo: Record<string, string> = { 'agent.model': modelKey, 'agent.sdk': 'javascript' };
+  if (headers.se) demo.se = headers.se;
+  if (headers.customerType) demo.customerType = headers.customerType;
+  if (headers.cexp) demo.cexp = headers.cexp;
+  Sentry.setTags(demo);
+  Sentry.setAttributes(demo);
 
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
